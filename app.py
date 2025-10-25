@@ -257,28 +257,25 @@ class TextProcessor:
     
     @staticmethod
     def final_cleanup(text):
-        """最终清理合并后的文本"""
+        """最终清理合并后的文本 - 保持段落结构"""
         if not text:
             return ""
         
-        # 分解为行
-        lines = text.split('\n')
-        clean_lines = []
-        seen_lines = set()
+        # 移除中文间空格
+        text = re.sub(r'(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])', '', text)
         
-        for line in lines:
-            line = line.strip()
-            if line and line not in seen_lines:
-                clean_lines.append(line)
-                seen_lines.add(line)
+        # 按段落处理（保持双换行分隔）
+        paragraphs = text.split('\n\n')
+        clean_paragraphs = []
+        seen_paragraphs = set()
         
-        # 重新组织段落
-        final_text = '\n\n'.join(clean_lines)
+        for paragraph in paragraphs:
+            paragraph = paragraph.strip()
+            if paragraph and paragraph not in seen_paragraphs:
+                clean_paragraphs.append(paragraph)
+                seen_paragraphs.add(paragraph)
         
-        # 最后一次移除中文间空格
-        final_text = re.sub(r'(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])', '', final_text)
-        
-        return final_text
+        return '\n\n'.join(clean_paragraphs)
     
     @staticmethod
     def is_continuous(text1, text2):
@@ -582,39 +579,34 @@ class TextProcessor:
     
     @staticmethod
     def format_final_text(text):
-        """最终文本格式化处理"""
+        """最终文本格式化处理 - 保持原图片段落结构"""
         if not text:
             return ""
         
-        # 去除重复行
-        lines = text.split('\n')
-        unique_lines = []
-        seen = set()
+        # 按空行分割段落（保持原图片段落结构）
+        paragraphs = text.split('\n\n')
+        formatted_paragraphs = []
         
-        for line in lines:
-            line = line.strip()
-            if line and line not in seen:
-                unique_lines.append(line)
-                seen.add(line)
+        for paragraph in paragraphs:
+            if not paragraph.strip():
+                continue
+                
+            # 对每个段落内部处理：合并换行但保持段落间隔
+            lines = paragraph.split('\n')
+            cleaned_lines = []
+            
+            for line in lines:
+                line = line.strip()
+                if line:
+                    cleaned_lines.append(line)
+            
+            # 将段落内的行直接连接（不加空格）
+            if cleaned_lines:
+                paragraph_text = ''.join(cleaned_lines)
+                formatted_paragraphs.append(paragraph_text)
         
-        # 智能分段
-        paragraphs = []
-        current_paragraph = []
-        
-        for line in unique_lines:
-            # 如果是句子结尾，结束当前段落
-            if line.endswith(('。', '.', '!', '?', '！', '？')):
-                current_paragraph.append(line)
-                paragraphs.append(' '.join(current_paragraph))
-                current_paragraph = []
-            else:
-                current_paragraph.append(line)
-        
-        # 处理最后一个段落
-        if current_paragraph:
-            paragraphs.append(' '.join(current_paragraph))
-        
-        return '\n\n'.join(paragraphs)
+        # 用双换行分隔段落
+        return '\n\n'.join(formatted_paragraphs)
     
     @staticmethod
     def clean_and_format(text):
@@ -737,9 +729,10 @@ class FileExporter:
         # 清理文本中的多余空格
         cleaned_text = re.sub(r'(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])', '', text)
         
-        # 构建PDF内容
+        # 构建PDF内容 - 保持段落结构
         story = []
         
+        # 按双换行分割段落
         for paragraph_text in cleaned_text.split('\n\n'):
             if paragraph_text.strip():
                 # 转义HTML特殊字符
@@ -747,13 +740,9 @@ class FileExporter:
                 paragraph_text = paragraph_text.replace('<', '&lt;')
                 paragraph_text = paragraph_text.replace('>', '&gt;')
                 
-                # 添加调试信息
-                print(f"正在处理段落: {paragraph_text[:50]}...")
-                print(f"使用字体: {font_name}")
-                
                 para = Paragraph(paragraph_text, chinese_style)
                 story.append(para)
-                story.append(Spacer(1, 6))
+                story.append(Spacer(1, 12))  # 段落间距
         
         # 生成PDF
         doc.build(story)
