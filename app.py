@@ -14,6 +14,11 @@ from reportlab.lib.units import inch
 import uuid
 import re
 from difflib import SequenceMatcher
+try:
+    import easyocr
+    EASYOCR_AVAILABLE = True
+except ImportError:
+    EASYOCR_AVAILABLE = False
 
 app = Flask(__name__)
 
@@ -23,10 +28,37 @@ app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # Gemini API配置
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'your_gemini_api_key')
+GEMINI_API_KEY = "AIzaSyDeYj-tpMueljip6MnfjGNjDggllevLjwY"
 
 class OCRProcessor:
+    def __init__(self):
+        self.easyocr_reader = None
+        if EASYOCR_AVAILABLE:
+            try:
+                self.easyocr_reader = easyocr.Reader(['ch_sim', 'en'])
+                print("初始化EasyOCR成功")
+            except Exception as e:
+                print(f"EasyOCR初始化失败: {e}")
+    
     def ocr_image(self, image_data):
+        # 优先尝试Gemini API
+        gemini_result = self._try_gemini_ocr(image_data)
+        if not gemini_result.startswith("API错误") and not gemini_result.startswith("OCR识别错误"):
+            return gemini_result
+        
+        # Gemini失败时使用EasyOCR
+        print("Gemini API不可用，尝试使用EasyOCR")
+        easyocr_result = self._try_easyocr(image_data)
+        if easyocr_result:
+            return easyocr_result
+        
+        # 都失败时返回提示信息
+        return "图片识别失败。您可以手动输入文本内容进行整理和导出。"
+    
+    def _try_gemini_ocr(self, image_data):
+        if not GEMINI_API_KEY or GEMINI_API_KEY == 'your_gemini_api_key':
+            return "API错误: 未配置Gemini API密钥"
+        
         img_base64 = base64.b64encode(image_data).decode('utf-8')
         
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
@@ -39,7 +71,7 @@ class OCRProcessor:
             "contents": [{
                 "parts": [
                     {
-                        "text": "请识别图片中的所有文字，按原有顺序输出，保持段落结构。只输出识别的文字内容，不要添加任何说明。"
+                        "text": "请识别图片中的所有文字。重要要求：1)保持原图片的段落结构，段落之间用双换行分隔。2)将同一段落内的换行合并为连续文本，英文单词间加空格，中文字符直接连接。3)只输出整理后的文字内容，不要添加任何说明。"
                     },
                     {
                         "inline_data": {
@@ -52,23 +84,52 @@ class OCRProcessor:
         }
         
         try:
-            print(f"发送Gemini OCR请求，图片大小: {len(image_data)} bytes")
-            response = requests.post(url, headers=headers, json=payload)
-            print(f"API响应状态: {response.status_code}")
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
+            
+            if response.status_code != 200:
+                return f"API错误: HTTP {response.status_code}"
             
             result = response.json()
-            print(f"API响应内容: {result}")
             
             if 'candidates' in result and len(result['candidates']) > 0:
                 text = result['candidates'][0]['content']['parts'][0]['text']
-                print(f"识别到的文字: {text}")
+                print(f"Gemini识别成功")
                 return text
             elif 'error' in result:
                 return f"API错误: {result['error']['message']}"
-            return "未识别到文字"
+            return "API错误: 未识别到文字"
         except Exception as e:
-            print(f"OCR异常: {str(e)}")
             return f"OCR识别错误: {str(e)}"
+    
+    def _try_easyocr(self, image_data):
+        if not self.easyocr_reader:
+            return None
+        
+        try:
+            import io
+            from PIL import Image
+            import numpy as np
+            
+            # 将字节数据转为图像
+            image = Image.open(io.BytesIO(image_data))
+            image_array = np.array(image)
+            
+            # 使用EasyOCR识别
+            results = self.easyocr_reader.readtext(image_array)
+            
+            # 提取文本
+            text_lines = []
+            for (bbox, text, confidence) in results:
+                if confidence > 0.3:  # 过滤低置信度的结果
+                    text_lines.append(text)
+            
+            result_text = '\n'.join(text_lines)
+            print(f"EasyOCR识别成功，识别到 {len(text_lines)} 行文字")
+            return result_text if result_text else "未识别到文字"
+            
+        except Exception as e:
+            print(f"EasyOCR识别失败: {e}")
+            return None
 
 class TextProcessor:
     @staticmethod
@@ -105,10 +166,11 @@ class TextProcessor:
         # 先过滤低置信度文字
         text = TextProcessor.filter_low_confidence_text(text)
         
-        # 噪声关键词
-        noise_keywords = ["下载", "立即加入", "会员", "广告", "APP", "返回首页", 
-                         "点击查看", "滑动", "扫码", "二维码", "水印", "版权所有",
-                         "登录", "注册", "分享", "关注", "点赞", "收藏"]
+        # 噪声关键词（只删除明显的广告和界面元素）
+        noise_keywords = ["下载应用", "立即下载", "扫码下载", "点击下载",
+                         "立即加入", "免费会员", "开通会员", 
+                         "点击查看更多", "滑动查看", "扫码关注",
+                         "返回首页", "返回顶部", "版权所有"]
         
         lines = text.split('\n')
         clean_lines = []
@@ -118,16 +180,15 @@ class TextProcessor:
             if not line:
                 continue
                 
-            # 删除包含噪声关键词的行
+            # 只删除包含明显噪声关键词的行
             if any(keyword in line for keyword in noise_keywords):
                 continue
                 
-            # 删除只有符号或随机字母的短行
-            if len(line) < 5 or re.match(r'^[^\u4e00-\u9fff]*$', line) and len(line) < 10:
-                continue
-                
-            # 删除明显的UI元素
-            if re.match(r'^[\d\s\-\.]+$', line) or line in ['>', '<', '|', '...']:
+            # 保留有意义的内容（放宽过滤条件）
+            # 只删除纯符号或特别短的无意义内容
+            if (len(line) < 3 or 
+                line in ['>', '<', '|', '...', '---', '==='] or
+                re.match(r'^[\s\-\.\|_=]+$', line)):
                 continue
                 
             clean_lines.append(line)
@@ -558,40 +619,56 @@ class TextProcessor:
     @staticmethod
     def merge_two_pages(text1, text2):
         """合并两页文本，去除重复部分"""
-        lines1 = [line.strip() for line in text1.split('\n') if line.strip()]
-        lines2 = [line.strip() for line in text2.split('\n') if line.strip()]
+        # 按句子分割来检测重复
+        sentences1 = re.split(r'[。！？.!?]', text1)
+        sentences2 = re.split(r'[。！？.!?]', text2)
+        
+        # 清理空句子
+        sentences1 = [s.strip() for s in sentences1 if s.strip()]
+        sentences2 = [s.strip() for s in sentences2 if s.strip()]
         
         # 找到重复的起始位置
         overlap_start = 0
-        for i, line2 in enumerate(lines2):
-            # 检查这行是否在text1的后几行中出现
-            if any(line2 == line1 for line1 in lines1[-5:]):
+        for i, sent2 in enumerate(sentences2):
+            # 检查这个句子是否在text1的后几个句子中出现
+            found_in_text1 = False
+            for sent1 in sentences1[-3:]:
+                if sent2 in sent1 or sent1 in sent2 or sent2 == sent1:
+                    found_in_text1 = True
+                    break
+            
+            if found_in_text1:
                 overlap_start = i + 1
             else:
                 break
         
         # 拼接非重复部分
-        unique_lines2 = lines2[overlap_start:]
-        if unique_lines2:
-            return '\n'.join(lines1 + unique_lines2)
+        unique_sentences2 = sentences2[overlap_start:]
+        if unique_sentences2:
+            # 重新组合成段落
+            all_sentences = sentences1 + unique_sentences2
+            return '。'.join(all_sentences) + '。' if all_sentences else ''
         else:
-            return '\n'.join(lines1)
+            return '。'.join(sentences1) + '。' if sentences1 else ''
     
     @staticmethod
     def format_final_text(text):
-        """最终文本格式化处理 - 保持原图片段落结构"""
+        """最终文本格式化处理 - 智能合并换行保持段落"""
         if not text:
             return ""
         
-        # 按空行分割段落（保持原图片段落结构）
-        paragraphs = text.split('\n\n')
+        # 先移除中文间多余空格
+        text = re.sub(r'(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])', '', text)
+        
+        # 按双换行分割段落
+        paragraphs = re.split(r'\n\s*\n', text)
         formatted_paragraphs = []
         
         for paragraph in paragraphs:
             if not paragraph.strip():
                 continue
-                
-            # 对每个段落内部处理：合并换行但保持段落间隔
+            
+            # 对每个段落内部处理
             lines = paragraph.split('\n')
             cleaned_lines = []
             
@@ -600,18 +677,106 @@ class TextProcessor:
                 if line:
                     cleaned_lines.append(line)
             
-            # 将段落内的行直接连接（不加空格）
             if cleaned_lines:
-                paragraph_text = ''.join(cleaned_lines)
-                formatted_paragraphs.append(paragraph_text)
+                # 智能合并：英文加空格，中文直接连接
+                merged_text = ""
+                for i, line in enumerate(cleaned_lines):
+                    if i == 0:
+                        merged_text = line
+                    else:
+                        # 如果前一行以英文结尾且当前行以英文开头，加空格
+                        prev_line = cleaned_lines[i-1]
+                        if (re.search(r'[a-zA-Z]$', prev_line) and 
+                            re.search(r'^[a-zA-Z]', line)):
+                            merged_text += " " + line
+                        else:
+                            merged_text += line
+                
+                formatted_paragraphs.append(merged_text)
         
-        # 用双换行分隔段落
         return '\n\n'.join(formatted_paragraphs)
     
     @staticmethod
     def clean_and_format(text):
-        """单页文本清理和格式化（保持向后兼容）"""
-        return TextProcessor.clean_and_merge_texts([text])
+        """单页文本清理和格式化 - 强制段落处理"""
+        if not text:
+            return ""
+        
+        # 先进行基础清理
+        cleaned_text = TextProcessor.clean_noise_text(text)
+        
+        # 强制段落处理
+        return TextProcessor.force_paragraph_formatting(cleaned_text)
+    
+    @staticmethod
+    def force_paragraph_formatting(text):
+        """强制段落格式化 - 智能检测段落"""
+        if not text:
+            return ""
+        
+        lines = text.split('\n')
+        paragraphs = []
+        current_paragraph = []
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                # 空行表示段落结束
+                if current_paragraph:
+                    paragraphs.append(current_paragraph)
+                    current_paragraph = []
+            else:
+                # 智能检测段落分隔
+                should_start_new_paragraph = False
+                
+                if current_paragraph:
+                    prev_line = current_paragraph[-1]
+                    
+                    # 检测段落结束标志
+                    if (prev_line.endswith(('。', '.', '!', '?', '！', '？')) and
+                        not line.startswith(('但是', '然而', '因此', '所以', 'However', 'But', 'Therefore'))):
+                        should_start_new_paragraph = True
+                    
+                    # 检测缩进或特殊格式
+                    if (line.startswith(('    ', '\t', '　　')) or
+                        re.match(r'^\d+[\.）]', line) or  # 编号列表
+                        re.match(r'^[A-Za-z]\)', line)):   # 字母列表
+                        should_start_new_paragraph = True
+                
+                if should_start_new_paragraph:
+                    paragraphs.append(current_paragraph)
+                    current_paragraph = [line]
+                else:
+                    current_paragraph.append(line)
+        
+        # 处理最后一个段落
+        if current_paragraph:
+            paragraphs.append(current_paragraph)
+        
+        # 合并每个段落内的行
+        formatted_paragraphs = []
+        for paragraph_lines in paragraphs:
+            if not paragraph_lines:
+                continue
+            
+            # 智能合并行
+            merged_text = ""
+            for i, line in enumerate(paragraph_lines):
+                if i == 0:
+                    merged_text = line
+                else:
+                    # 英文单词间加空格，中文直接连接
+                    prev_line = paragraph_lines[i-1]
+                    if (re.search(r'[a-zA-Z]$', prev_line) and 
+                        re.search(r'^[a-zA-Z]', line)):
+                        merged_text += " " + line
+                    else:
+                        merged_text += line
+            
+            formatted_paragraphs.append(merged_text)
+        
+        # 用双换行分隔段落
+        return '\n\n'.join(formatted_paragraphs)
     
     @staticmethod
     def llm_semantic_correction(text):
@@ -634,6 +799,28 @@ class TextProcessor:
         except:
             pass
         return text
+
+    @staticmethod
+    def dev_clean_text(ocr_text: str) -> str:
+        """
+        🧠 开发者命令：清理OCR换行符，只保留段落空行。
+        功能：
+        1. 删除段内换行（合并为一行）
+        2. 保留段落空行（双换行）
+        3. 去掉多余空格
+        """
+        if not ocr_text:
+            return ""
+        
+        text = ocr_text.replace("\r\n", "\n").strip()
+        # 合并行内换行，只保留段落空行
+        text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)
+        # 清理多余空格
+        text = re.sub(r'[ \t]+', ' ', text)
+        # 按双换行分段，去掉段首尾空格
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        return "\n\n".join(paragraphs)
+
 
 class FileExporter:
     @staticmethod
@@ -778,13 +965,35 @@ def upload_files():
         raw_text = ocr_processor.ocr_image(image_data)
         
         # AI文本处理（增强清理）
-        processed_text = text_processor.clean_and_format(raw_text)
+        # 先用开发者清洗命令去除多余换行，再做格式化
+        cleaned_text = text_processor.dev_clean_text(raw_text)
+        processed_text = text_processor.clean_and_format(cleaned_text)
+
         
         results.append({
             'filename': file.filename,
             'raw_text': raw_text,
             'processed_text': processed_text
         })
+    
+    # 检查是否有OCR失败的结果
+    failed_results = [r for r in results if r['raw_text'].startswith(('无法连接OCR服务', 'API错误', 'OCR识别错误'))]
+    if failed_results:
+        # 返回部分成功的结果，即使有失败
+        successful_results = [r for r in results if not r['raw_text'].startswith(('无法连接OCR服务', 'API错误', 'OCR识别错误'))]
+        if successful_results:
+            page_texts = [result['processed_text'] for result in successful_results]
+            merged_text = text_processor.clean_and_merge_texts(page_texts)
+            return jsonify({
+                'results': results,
+                'merged_text': merged_text,
+                'warning': f'{len(failed_results)}张图片识别失败，已处理{len(successful_results)}张成功的图片'
+            })
+        else:
+            return jsonify({
+                'error': '所有图片OCR识别失败，请检查网络连接或配置API密钥',
+                'results': results
+            }), 400
     
     # 使用新的清理和合并函数
     page_texts = [result['processed_text'] for result in results]
@@ -801,6 +1010,23 @@ def upload_files():
     })
     
     return jsonify({'results': results})
+
+@app.route('/dev/clean', methods=['POST'])
+def dev_clean():
+    """
+    🧹 开发者接口：测试 OCR 文本的换行清理
+    用法：
+        POST { "text": "OCR原文" }
+    返回：
+        {"cleaned_text": "..."}
+    """
+    data = request.get_json()
+    text = data.get('text', '')
+    cleaned = text_processor.dev_clean_text(text)
+    return jsonify({"cleaned_text": cleaned})
+
+
+
 
 @app.route('/export', methods=['POST'])
 def export_file():

@@ -37,6 +37,8 @@ class OCRAssistant {
 
         // 导出文件
         exportBtn.addEventListener('click', () => this.exportFile());
+        
+
     }
 
     handleFileSelect(files) {
@@ -141,6 +143,8 @@ class OCRAssistant {
             console.error('OCR Error:', error);
         }
     }
+
+
 
     async exportFile() {
         const textEditor = document.getElementById('textEditor');

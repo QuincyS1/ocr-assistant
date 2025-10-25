@@ -239,6 +239,8 @@ header p {
     border-color: #3498db;
 }
 
+
+
 @media (max-width: 768px) {
     .main-content {
         grid-template-columns: 1fr;
