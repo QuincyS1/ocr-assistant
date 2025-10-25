@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多图OCR识别与文本整合助手</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>多图OCR识别与文本整合助手</h1>
+            <p>上传图片，自动识别文字，智能整理排版</p>
+        </header>
+
+        <div class="main-content">
+            <div class="left-panel">
+                <div class="upload-section">
+                    <h3>上传图片</h3>
+                    <div class="upload-area" id="uploadArea">
+                        <input type="file" id="fileInput" multiple accept="image/*" style="display: none;">
+                        <div class="upload-placeholder">
+                            <div class="upload-icon">📁</div>
+                            <p>点击或拖拽上传图片</p>
+                            <p class="upload-hint">支持 JPG、PNG、GIF 格式</p>
+                        </div>
+                    </div>
+                    <button id="uploadBtn" class="btn btn-primary">开始识别</button>
+                </div>
+
+                <div class="file-list" id="fileList">
+                    <h3>文件列表</h3>
+                    <div id="fileItems"></div>
+                </div>
+
+                <div class="progress-section" id="progressSection" style="display: none;">
+                    <h3>识别进度</h3>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <p id="progressText">准备中...</p>
+                </div>
+            </div>
+
+            <div class="right-panel">
+                <div class="preview-section">
+                    <h3>识别结果</h3>
+                    <div class="text-editor">
+                        <textarea id="textEditor" placeholder="识别结果将显示在这里，您可以直接编辑..."></textarea>
+                    </div>
+                </div>
+
+                <div class="export-section">
+                    <h3>导出文件</h3>
+                    <div class="format-options">
+                        <label><input type="radio" name="format" value="txt" checked> TXT</label>
+                        <label><input type="radio" name="format" value="docx"> DOCX</label>
+                        <label><input type="radio" name="format" value="md"> Markdown</label>
+                        <label><input type="radio" name="format" value="pdf"> PDF</label>
+                    </div>
+                    <input type="text" id="filename" placeholder="文件名（可选）" class="filename-input">
+                    <button id="exportBtn" class="btn btn-success">下载文件</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
