@@ -14,11 +14,8 @@ from reportlab.lib.units import inch
 import uuid
 import re
 from difflib import SequenceMatcher
-try:
-    import easyocr
-    EASYOCR_AVAILABLE = True
-except ImportError:
-    EASYOCR_AVAILABLE = False
+from PIL import Image
+import io
 
 app = Flask(__name__)
 
@@ -32,28 +29,16 @@ GEMINI_API_KEY = "AIzaSyDeYj-tpMueljip6MnfjGNjDggllevLjwY"
 
 class OCRProcessor:
     def __init__(self):
-        self.easyocr_reader = None
-        if EASYOCR_AVAILABLE:
-            try:
-                self.easyocr_reader = easyocr.Reader(['ch_sim', 'en'])
-                print("初始化EasyOCR成功")
-            except Exception as e:
-                print(f"EasyOCR初始化失败: {e}")
+        print("初始化OCR处理器")
     
     def ocr_image(self, image_data):
-        # 优先尝试Gemini API
+        # 使用Gemini API进行OCR识别
         gemini_result = self._try_gemini_ocr(image_data)
         if not gemini_result.startswith("API错误") and not gemini_result.startswith("OCR识别错误"):
             return gemini_result
         
-        # Gemini失败时使用EasyOCR
-        print("Gemini API不可用，尝试使用EasyOCR")
-        easyocr_result = self._try_easyocr(image_data)
-        if easyocr_result:
-            return easyocr_result
-        
-        # 都失败时返回提示信息
-        return "图片识别失败。您可以手动输入文本内容进行整理和导出。"
+        # Gemini失败时返回提示信息
+        return "图片识别失败。请检查网络连接或API配置。您也可以手动输入文本内容进行整理和导出。"
     
     def _try_gemini_ocr(self, image_data):
         if not GEMINI_API_KEY or GEMINI_API_KEY == 'your_gemini_api_key':
@@ -101,35 +86,7 @@ class OCRProcessor:
         except Exception as e:
             return f"OCR识别错误: {str(e)}"
     
-    def _try_easyocr(self, image_data):
-        if not self.easyocr_reader:
-            return None
-        
-        try:
-            import io
-            from PIL import Image
-            import numpy as np
-            
-            # 将字节数据转为图像
-            image = Image.open(io.BytesIO(image_data))
-            image_array = np.array(image)
-            
-            # 使用EasyOCR识别
-            results = self.easyocr_reader.readtext(image_array)
-            
-            # 提取文本
-            text_lines = []
-            for (bbox, text, confidence) in results:
-                if confidence > 0.3:  # 过滤低置信度的结果
-                    text_lines.append(text)
-            
-            result_text = '\n'.join(text_lines)
-            print(f"EasyOCR识别成功，识别到 {len(text_lines)} 行文字")
-            return result_text if result_text else "未识别到文字"
-            
-        except Exception as e:
-            print(f"EasyOCR识别失败: {e}")
-            return None
+
 
 class TextProcessor:
     @staticmethod
