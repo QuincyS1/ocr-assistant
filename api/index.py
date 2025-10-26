@@ -1,8 +1,12 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
 from app import app
 
 # Vercel entry point
-def handler(request):
-    return app(request.environ, request.start_response)
+def handler(event, context):
+    return app
 
-# For Vercel compatibility
-application = app
+# Export for Vercel
+app = app
