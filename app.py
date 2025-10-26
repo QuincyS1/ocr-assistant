@@ -88,45 +88,11 @@ class OCRProcessor:
 
 
 class TextProcessor:
-    @staticmethod
-    def filter_low_confidence_text(text, confidence_threshold=0.6):
-        """过滤低置信度和残缺文字"""
-        import re
-        
-        lines = text.split('\n')
-        filtered_lines = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            # 过滤孤立符号、半个字、拼音、随机字符
-            if len(line) < 2 or re.match(r'^[a-zA-Z\s\d\W]+$', line) and len(line) < 8:
-                continue
-                
-            # 过滤明显的残缺文字（以特殊符号开头或结尾）
-            if re.match(r'^[\W\d]', line) or re.search(r'[\W\d]$', line) and len(line) < 6:
-                continue
-                
-            # 保留有意义的文字
-            if re.search(r'[\u4e00-\u9fff]', line) or len(line) > 10:
-                filtered_lines.append(line)
-        
-        return '\n'.join(filtered_lines)
+
     
     @staticmethod
     def clean_noise_text(text):
         import re
-        
-        # 先过滤低置信度文字
-        text = TextProcessor.filter_low_confidence_text(text)
-        
-        # 噪声关键词（只删除明显的广告和界面元素）
-        noise_keywords = ["下载应用", "立即下载", "扫码下载", "点击下载",
-                         "立即加入", "免费会员", "开通会员", 
-                         "点击查看更多", "滑动查看", "扫码关注",
-                         "返回首页", "返回顶部", "版权所有"]
         
         lines = text.split('\n')
         clean_lines = []
@@ -135,18 +101,21 @@ class TextProcessor:
             line = line.strip()
             if not line:
                 continue
-                
-            # 只删除包含明显噪声关键词的行
-            if any(keyword in line for keyword in noise_keywords):
+            
+            # 只删除明显的广告词
+            if any(keyword in line for keyword in ["下载应用", "立即下载", "扫码下载", "点击下载", "立即加入", "免费会员", "开通会员"]):
                 continue
-                
-            # 保留有意义的内容（放宽过滤条件）
-            # 只删除纯符号或特别短的无意义内容
-            if (len(line) < 3 or 
-                line in ['>', '<', '|', '...', '---', '==='] or
-                re.match(r'^[\s\-\.\|_=]+$', line)):
+            
+            # 删除时间戳 (如: 2023-10-26 13:40:12, 13:40, 10月26日)
+            if re.match(r'^\d{1,4}[-/年]\d{1,2}[-/月]\d{1,2}[日]?\s*\d{1,2}[时:]\d{1,2}', line):
                 continue
-                
+            if re.match(r'^\d{1,2}[时:]\d{1,2}', line) and len(line) < 10:
+                continue
+            
+            # 删除页码 (如: 第1页, 1/10, Page 1)
+            if re.match(r'^(第\d+页|\d+/\d+|Page\s*\d+)$', line):
+                continue
+            
             clean_lines.append(line)
         
         return '\n'.join(clean_lines)
