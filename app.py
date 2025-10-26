@@ -20,9 +20,8 @@ import io
 app = Flask(__name__)
 
 # Vercel兼容性
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # Gemini API配置
 GEMINI_API_KEY = "AIzaSyDeYj-tpMueljip6MnfjGNjDggllevLjwY"
