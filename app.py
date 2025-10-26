@@ -439,12 +439,10 @@ class TextProcessor:
         if not pages:
             return ""
         
-        # 1. 对每页进行基础清理和空格处理
+        # 对每页进行基础清理
         cleaned_pages = []
         for page_text in pages:
-            # 基础噪声清理
             cleaned = TextProcessor.clean_noise_text(page_text)
-            # 移除中文间多余空格
             cleaned = TextProcessor.remove_chinese_spaces(cleaned)
             if cleaned.strip():
                 cleaned_pages.append(cleaned)
@@ -452,16 +450,8 @@ class TextProcessor:
         if not cleaned_pages:
             return ""
         
-        if len(cleaned_pages) == 1:
-            return TextProcessor.format_final_text(cleaned_pages[0])
-        
-        # 2. 检测页面连续性并重排序
-        ordered_pages = TextProcessor.detect_and_reorder_pages(cleaned_pages)
-        
-        # 3. 智能拼接去重
-        merged_text = TextProcessor.smart_merge_pages(ordered_pages)
-        
-        # 4. 最终格式化
+        # 简单拼接所有页面
+        merged_text = '\n\n'.join(cleaned_pages)
         return TextProcessor.format_final_text(merged_text)
     
     @staticmethod
